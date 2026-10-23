@@ -654,14 +654,16 @@ impl Table {
     /// This might invoke the `__len` metamethod. Use the [`Table::raw_len`] method if that is not
     /// desired.
     pub fn len(&self) -> Result<Integer> {
-        // Fast track (skip protected call)
-        if !self.has_metatable() {
-            return Ok(self.raw_len() as Integer);
-        }
-
         let lua = self.0.lua.lock();
-        let state = lua.state();
+        let ref_thread = lua.ref_thread();
         unsafe {
+            // Fast track (skip protected call), keeping the same lock for both checks.
+            if ffi::lua_getmetatable(ref_thread, self.0.index) == 0 {
+                return Ok(ffi::lua_rawlen(ref_thread, self.0.index) as Integer);
+            }
+            ffi::lua_pop(ref_thread, 1);
+
+            let state = lua.state();
             let _sg = StackGuard::new(state);
             check_stack(state, 4)?;
 

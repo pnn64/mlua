@@ -180,5 +180,47 @@ fn main() -> mlua::Result<()> {
         }
     }
 
+    #[cfg(any(feature = "lua51", feature = "lua52", feature = "luajit"))]
+    if "integer_conversion".contains(&filter) {
+        let identity: Function = lua.load("function(n) return n end").eval()?;
+        for number in [42.0, 42.75] {
+            measure(&format!("integer_conversion/{number}"), 1, || {
+                black_box(identity.call::<i64>(black_box(number)).unwrap());
+            });
+        }
+        let table = lua.create_sequence_from((0..64).map(|i| i as f64 + 0.75))?;
+        measure("integer_conversion/sequence64", 64, || {
+            black_box(lua.unpack::<Vec<i64>>(Value::Table(table.clone())).unwrap());
+        });
+    }
+
+    if "owned_string".contains(&filter) {
+        let identity: Function = lua.load("function(s) return s end").eval()?;
+        let s = lua.create_string("an owned Rust string")?;
+        measure("owned_string/from_value", 1, || {
+            let value = identity.call::<Value>(black_box(&s)).unwrap();
+            black_box(lua.unpack::<String>(value).unwrap());
+        });
+        measure("owned_string/boxed_result", 1, || {
+            black_box(identity.call::<Box<str>>(black_box(&s)).unwrap());
+        });
+        measure("owned_string/bytes_from_value", 1, || {
+            let value = identity.call::<Value>(black_box(&s)).unwrap();
+            black_box(lua.unpack::<bstr::BString>(value).unwrap());
+        });
+    }
+
+    if "table_len".contains(&filter) {
+        for metatable in [false, true] {
+            let table = lua.create_sequence_from(0..64)?;
+            if metatable {
+                table.set_metatable(Some(lua.create_table()?))?;
+            }
+            measure(&format!("table_len/metatable={metatable}"), 1, || {
+                black_box(table.len().unwrap());
+            });
+        }
+    }
+
     Ok(())
 }

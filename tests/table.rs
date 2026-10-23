@@ -74,6 +74,24 @@ fn test_table_with_large_capacity() {
 }
 
 #[test]
+fn test_table_len_reentrant_metatable_change() -> Result<()> {
+    let lua = Lua::new();
+    let table = lua.create_sequence_from([1, 2, 3])?;
+    let len = lua.create_function(|_, table: Table| {
+        table.set_metatable(None)?;
+        assert_eq!(table.len()?, 3);
+        Ok(17)
+    })?;
+    let metatable = lua.create_table_from([("__len", len)])?;
+    for _ in 0..8 {
+        table.set_metatable(Some(metatable.clone()))?;
+        assert_eq!(table.len()?, 17);
+        assert_eq!(table.len()?, 3);
+    }
+    Ok(())
+}
+
+#[test]
 fn test_table_push_pop() -> Result<()> {
     let lua = Lua::new();
 

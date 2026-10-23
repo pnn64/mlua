@@ -478,13 +478,10 @@ impl FromLua for String {
     #[inline]
     fn from_lua(value: Value, lua: &Lua) -> Result<Self> {
         let ty = value.type_name();
-        Ok(lua
-            .coerce_string(value)?
-            .ok_or_else(|| {
-                Error::from_lua_conversion(ty, Self::type_name(), "expected string or number".to_string())
-            })?
-            .to_str()?
-            .to_owned())
+        let string = lua.coerce_string(value)?.ok_or_else(|| {
+            Error::from_lua_conversion(ty, Self::type_name(), "expected string or number".to_string())
+        })?;
+        Ok(BorrowedStr::try_from(string)?.to_owned())
     }
 
     #[inline]
@@ -537,14 +534,10 @@ impl FromLua for Box<str> {
     #[inline]
     fn from_lua(value: Value, lua: &Lua) -> Result<Self> {
         let ty = value.type_name();
-        Ok(lua
-            .coerce_string(value)?
-            .ok_or_else(|| {
-                Error::from_lua_conversion(ty, Self::type_name(), "expected string or number".to_string())
-            })?
-            .to_str()?
-            .to_owned()
-            .into_boxed_str())
+        let string = lua.coerce_string(value)?.ok_or_else(|| {
+            Error::from_lua_conversion(ty, Self::type_name(), "expected string or number".to_string())
+        })?;
+        Ok(Box::from(&*BorrowedStr::try_from(string)?))
     }
 }
 
@@ -606,18 +599,14 @@ impl IntoLua for BString {
 impl FromLua for BString {
     fn from_lua(value: Value, lua: &Lua) -> Result<Self> {
         let ty = value.type_name();
-        match value {
-            Value::String(s) => Ok((*s.as_bytes()).into()),
-            #[cfg(feature = "luau")]
-            Value::Buffer(buf) => Ok(buf.to_vec().into()),
-            _ => Ok((*lua
-                .coerce_string(value)?
-                .ok_or_else(|| {
-                    Error::from_lua_conversion(ty, Self::type_name(), "expected string or number".to_string())
-                })?
-                .as_bytes())
-            .into()),
+        #[cfg(feature = "luau")]
+        if let Value::Buffer(buf) = value {
+            return Ok(buf.to_vec().into());
         }
+        let string = lua.coerce_string(value)?.ok_or_else(|| {
+            Error::from_lua_conversion(ty, Self::type_name(), "expected string or number".to_string())
+        })?;
+        Ok(BorrowedBytes::from(string).as_ref().into())
     }
 
     unsafe fn from_stack(idx: c_int, lua: &RawLua) -> Result<Self> {
@@ -810,6 +799,13 @@ macro_rules! lua_convert_int {
             unsafe fn from_stack(idx: c_int, lua: &RawLua) -> Result<Self> {
                 let state = lua.state();
                 let type_id = ffi::lua_type(state, idx);
+                // Lua 5.1/JIT truncate fractional numbers. Keep the fallback for error diagnostics.
+                #[cfg(any(feature = "lua51", feature = "luajit"))]
+                if type_id == ffi::LUA_TNUMBER
+                    && let Some(i) = cast(ffi::lua_tonumber(state, idx))
+                {
+                    return Ok(i);
+                }
                 #[cfg(feature = "luau")]
                 if matches!(type_id, ffi::LUA_TNUMBER | ffi::LUA_TSTRING) {
                     let mut ok = 0;

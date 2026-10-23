@@ -143,6 +143,51 @@ fn test_borrowed_string_ownership() -> Result<()> {
 }
 
 #[test]
+fn test_owned_string_conversions() -> Result<()> {
+    let lua = Lua::new();
+    let identity: Function = lua.load("function(s) return s end").eval()?;
+    for text in ["", "embedded\0nul", "Unicode: \u{1f980}"] {
+        let string = lua.create_string(text)?;
+        let unique = identity.call::<Value>(&string)?;
+        assert_eq!(lua.unpack::<String>(unique)?, text);
+        let boxed = identity.call::<Box<str>>(&string)?;
+        assert_eq!(&*boxed, text);
+        let shared = lua.unpack::<BString>(Value::String(string.clone()))?;
+        assert_eq!(shared, text);
+        lua.gc_collect()?;
+        assert_eq!(string.to_str()?, text);
+    }
+
+    let invalid = lua.create_string(b"invalid\0\xff")?;
+    let expected = invalid.to_str().unwrap_err().to_string();
+    assert_eq!(
+        lua.unpack::<String>(Value::String(invalid.clone()))
+            .unwrap_err()
+            .to_string(),
+        expected
+    );
+    assert_eq!(
+        lua.unpack::<Box<str>>(Value::String(invalid.clone()))
+            .unwrap_err()
+            .to_string(),
+        expected
+    );
+    let bytes = lua.unpack::<BString>(Value::String(invalid))?;
+
+    for value in [Value::Integer(123), Value::Number(12.5)] {
+        let expected = lua.coerce_string(value.clone())?.unwrap().to_string_lossy();
+        assert_eq!(lua.unpack::<String>(value.clone())?, expected);
+        assert_eq!(&*lua.unpack::<Box<str>>(value.clone())?, expected);
+        assert_eq!(lua.unpack::<BString>(value)?, expected);
+    }
+
+    lua.gc_collect()?;
+    drop(lua);
+    assert_eq!(bytes, b"invalid\0\xff".as_slice());
+    Ok(())
+}
+
+#[test]
 fn test_integer_to_number_rounding() -> Result<()> {
     let lua = Lua::new();
     let identity: Function = lua.load("function(x) return x end").eval()?;
@@ -365,6 +410,55 @@ fn test_bool_from_lua() -> Result<()> {
     assert!(lua.convert::<bool>(123)?);
     assert!(!lua.convert::<bool>(Value::Nil)?);
 
+    Ok(())
+}
+
+#[test]
+#[cfg(any(feature = "lua51", feature = "luajit"))]
+fn test_integer_stack_conversion_matches_value_conversion() -> Result<()> {
+    let lua = Lua::new();
+    let identity: Function = lua.load("function(n) return n end").eval()?;
+    let mut numbers = vec![
+        0.0,
+        -0.0,
+        0.5,
+        -0.5,
+        1.5,
+        -1.5,
+        127.75,
+        -128.75,
+        255.75,
+        256.75,
+        f64::from_bits(1),
+        -f64::from_bits(1),
+        f64::MIN,
+        f64::MAX,
+        f64::NEG_INFINITY,
+        f64::INFINITY,
+        f64::NAN,
+    ];
+    for bit in [15, 16, 31, 32, 53, 63, 64, 127, 128] {
+        let power = 2f64.powi(bit);
+        numbers.extend([
+            power,
+            -power,
+            f64::from_bits(power.to_bits() - 1),
+            -f64::from_bits(power.to_bits() - 1),
+        ]);
+    }
+    for number in numbers {
+        let value: Value = identity.call(number)?;
+        macro_rules! check {
+            ($($ty:ty),*) => {$(
+                assert_eq!(
+                    identity.call::<$ty>(number).map_err(|err| err.to_string()),
+                    lua.unpack::<$ty>(value.clone()).map_err(|err| err.to_string()),
+                    "{number:?} to {}", stringify!($ty),
+                );
+            )*};
+        }
+        check!(i8, u8, i16, u16, i32, u32, i64, u64, i128, u128, isize, usize);
+    }
     Ok(())
 }
 
