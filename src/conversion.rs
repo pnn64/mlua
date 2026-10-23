@@ -114,13 +114,11 @@ impl IntoLua for &BorrowedStr {
 
 impl FromLua for BorrowedStr {
     fn from_lua(value: Value, lua: &Lua) -> Result<Self> {
-        let s = LuaString::from_lua(value, lua)?;
-        BorrowedStr::try_from(&s)
+        BorrowedStr::try_from(LuaString::from_lua(value, lua)?)
     }
 
     unsafe fn from_stack(idx: c_int, lua: &RawLua) -> Result<Self> {
-        let s = LuaString::from_stack(idx, lua)?;
-        BorrowedStr::try_from(&s)
+        BorrowedStr::try_from(LuaString::from_stack(idx, lua)?)
     }
 }
 
@@ -152,13 +150,11 @@ impl IntoLua for &BorrowedBytes {
 
 impl FromLua for BorrowedBytes {
     fn from_lua(value: Value, lua: &Lua) -> Result<Self> {
-        let s = LuaString::from_lua(value, lua)?;
-        Ok(BorrowedBytes::from(&s))
+        Ok(BorrowedBytes::from(LuaString::from_lua(value, lua)?))
     }
 
     unsafe fn from_stack(idx: c_int, lua: &RawLua) -> Result<Self> {
-        let s = LuaString::from_stack(idx, lua)?;
-        Ok(BorrowedBytes::from(&s))
+        Ok(BorrowedBytes::from(LuaString::from_stack(idx, lua)?))
     }
 }
 

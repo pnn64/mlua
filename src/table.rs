@@ -832,6 +832,7 @@ impl Table {
         TablePairs {
             guard: self.0.lua.lock(),
             table: self,
+            #[cfg(not(feature = "luau"))]
             key: Some(Nil),
             #[cfg(feature = "luau")]
             index: 0,
@@ -1475,6 +1476,7 @@ impl Serialize for SerializableTable<'_> {
 pub struct TablePairs<'a, K, V> {
     guard: LuaGuard,
     table: &'a Table,
+    #[cfg(not(feature = "luau"))]
     key: Option<Value>,
     #[cfg(feature = "luau")]
     index: c_int,
@@ -1489,49 +1491,52 @@ where
     type Item = Result<(K, V)>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        if let Some(_prev_key) = self.key.take() {
-            let lua: &RawLua = &self.guard;
-            let state = lua.state();
+        #[cfg(not(feature = "luau"))]
+        let prev_key = self.key.take()?;
+        // lua_rawiter uses -1 for exhaustion. Stop on conversion errors and panics too.
+        #[cfg(feature = "luau")]
+        let index = match std::mem::replace(&mut self.index, -1) {
+            index if index >= 0 => index,
+            _ => return None,
+        };
 
-            let res = (|| unsafe {
-                let _sg = StackGuard::new(state);
-                check_stack(state, 5)?;
+        let lua: &RawLua = &self.guard;
+        let state = lua.state();
 
-                lua.push_ref(&self.table.0);
-                #[cfg(feature = "luau")]
-                let more = {
-                    self.index = ffi::lua_rawiter(state, -1, self.index);
-                    self.index >= 0
-                };
-                #[cfg(not(feature = "luau"))]
-                let more = {
-                    lua.push_value(&_prev_key)?;
-                    Table::next(state)?
-                };
+        let res = (|| unsafe {
+            let _sg = StackGuard::new(state);
+            check_stack(state, 5)?;
 
-                if more {
-                    let key = lua.try_stack_value(-2, None)?;
-                    Ok(Some((
-                        key.clone(),
-                        K::from_lua(key, lua.lua())?,
-                        V::from_stack(-1, lua)?,
-                    )))
-                } else {
-                    Ok(None)
-                }
-            })();
+            lua.push_ref(&self.table.0);
+            #[cfg(feature = "luau")]
+            let next_index = ffi::lua_rawiter(state, -1, index);
+            #[cfg(feature = "luau")]
+            let more = next_index >= 0;
+            #[cfg(not(feature = "luau"))]
+            let more = {
+                lua.push_value(&prev_key)?;
+                Table::next(state)?
+            };
 
-            match res {
-                Ok(Some((key, ret_key, value))) => {
-                    self.key = Some(key);
-                    Some(Ok((ret_key, value)))
-                }
-                Ok(None) => None,
-                Err(e) => Some(Err(e)),
+            if !more {
+                return Ok(None);
             }
-        } else {
-            None
-        }
+
+            let key = lua.try_stack_value(-2, None)?;
+            #[cfg(not(feature = "luau"))]
+            let next_key = key.clone();
+            let pair = (K::from_lua(key, lua.lua())?, V::from_stack(-1, lua)?);
+            #[cfg(not(feature = "luau"))]
+            {
+                self.key = Some(next_key);
+            }
+            #[cfg(feature = "luau")]
+            {
+                self.index = next_index;
+            }
+            Ok(Some(pair))
+        })();
+        res.transpose()
     }
 }
 

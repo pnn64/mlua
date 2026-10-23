@@ -1961,6 +1961,7 @@ impl Lua {
     pub fn coerce_number(&self, v: Value) -> Result<Option<Number>> {
         Ok(match v {
             Value::Number(n) => Some(n),
+            Value::Integer(i) => Some(i as Number),
             v => unsafe {
                 let lua = self.lock();
                 let state = lua.state();

@@ -362,6 +362,47 @@ fn test_table_pairs() -> Result<()> {
 }
 
 #[test]
+fn test_table_pairs_stop_after_error_or_end() -> Result<()> {
+    let lua = Lua::new();
+    let table = lua.create_table_from([("key", true)])?;
+    let mut values = table.pairs::<String, i64>();
+    assert!(values.next().unwrap().is_err());
+    assert!(values.next().is_none());
+    assert!(values.next().is_none());
+
+    let table = lua.create_table_from([(true, 1)])?;
+    let mut keys = table.pairs::<String, i64>();
+    assert!(keys.next().unwrap().is_err());
+    assert!(keys.next().is_none());
+
+    let mut pairs = table.pairs::<Value, i64>();
+    assert_eq!(pairs.next().unwrap()?.1, 1);
+    assert!(pairs.next().is_none());
+    table.set(false, 2)?;
+    assert!(pairs.next().is_none());
+    Ok(())
+}
+
+#[test]
+fn test_table_pairs_stop_after_conversion_panic() -> Result<()> {
+    struct PanicKey;
+
+    impl mlua::FromLua for PanicKey {
+        fn from_lua(_: Value, _: &Lua) -> Result<Self> {
+            panic!("key conversion panic");
+        }
+    }
+
+    let lua = Lua::new();
+    let table = lua.create_table_from([("key", 1)])?;
+    let mut pairs = table.pairs::<PanicKey, i64>();
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| pairs.next()));
+    assert!(result.is_err());
+    assert!(pairs.next().is_none());
+    Ok(())
+}
+
+#[test]
 #[cfg(feature = "luau")]
 fn test_table_iteration_after_clear() -> Result<()> {
     let lua = Lua::new();

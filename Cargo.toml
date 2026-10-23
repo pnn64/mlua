@@ -97,6 +97,10 @@ name = "serde"
 harness = false
 required-features = ["serde"]
 
+[[bench]]
+name = "hot_paths"
+harness = false
+
 [[example]]
 name = "async_http_client"
 required-features = ["async", "macros"]

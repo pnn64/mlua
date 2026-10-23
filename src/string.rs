@@ -324,6 +324,15 @@ impl TryFrom<&LuaString> for BorrowedStr {
 
     #[inline]
     fn try_from(value: &LuaString) -> Result<Self> {
+        Self::try_from(value.clone())
+    }
+}
+
+impl TryFrom<LuaString> for BorrowedStr {
+    type Error = Error;
+
+    #[inline]
+    fn try_from(value: LuaString) -> Result<Self> {
         let BorrowedBytes { buf, vref, _lua } = BorrowedBytes::from(value);
         let buf =
             str::from_utf8(buf).map_err(|e| Error::from_lua_conversion("string", "&str", e.to_string()))?;
@@ -412,11 +421,21 @@ impl<'a> IntoIterator for &'a BorrowedBytes {
 impl From<&LuaString> for BorrowedBytes {
     #[inline]
     fn from(value: &LuaString) -> Self {
+        Self::from(value.clone())
+    }
+}
+
+impl From<LuaString> for BorrowedBytes {
+    #[inline]
+    fn from(value: LuaString) -> Self {
         let (buf, _lua) = unsafe { value.to_slice() };
-        let vref = value.0.clone();
         // SAFETY: The `buf` is valid for the lifetime of the Lua state and occupied slot index
         let buf = unsafe { mem::transmute::<&[u8], &'static [u8]>(buf) };
-        Self { buf, vref, _lua }
+        Self {
+            buf,
+            vref: value.0,
+            _lua,
+        }
     }
 }
 

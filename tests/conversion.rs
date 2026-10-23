@@ -121,6 +121,45 @@ fn test_borrowedbytes_from_lua() -> Result<()> {
 }
 
 #[test]
+fn test_borrowed_string_ownership() -> Result<()> {
+    let lua = Lua::new();
+    let original = lua.create_string("shared\0string")?;
+    let shared: BorrowedStr = lua.unpack(Value::String(original.clone()))?;
+    let unique: BorrowedBytes = lua.convert(mlua::LuaString::wrap(b"unique\0\xff"))?;
+    let text: BorrowedStr = lua.convert("unique text")?;
+
+    let err = lua
+        .convert::<BorrowedStr>(mlua::LuaString::wrap(b"invalid\xff"))
+        .unwrap_err();
+    assert!(matches!(err, Error::FromLuaConversionError { from: "string", ref to, .. } if to == "&str"));
+
+    drop(original);
+    lua.gc_collect()?;
+    drop(lua);
+    assert_eq!(shared, "shared\0string");
+    assert_eq!(unique, b"unique\0\xff");
+    assert_eq!(text, "unique text");
+    Ok(())
+}
+
+#[test]
+fn test_integer_to_number_rounding() -> Result<()> {
+    let lua = Lua::new();
+    let identity: Function = lua.load("function(x) return x end").eval()?;
+    let mut integers = vec![0, mlua::Integer::MIN, mlua::Integer::MAX];
+    for bit in 0..mlua::Integer::BITS - 1 {
+        let power: mlua::Integer = 1 << bit;
+        integers.extend([power - 1, power, power + 1, -power - 1, -power, -power + 1]);
+    }
+    for integer in integers {
+        let expected: f64 = identity.call(integer)?;
+        let actual = lua.coerce_number(Value::Integer(integer))?.unwrap();
+        assert_eq!(actual.to_bits(), expected.to_bits(), "integer = {integer}");
+    }
+    Ok(())
+}
+
+#[test]
 fn test_table_into_lua() -> Result<()> {
     let lua = Lua::new();
 
